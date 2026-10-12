@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SF2 Generator (SPLAT to Print)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            color: #2d3436;
+        }
+        .container {
+            background: white;
+            padding: 2.5rem;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+            text-align: center;
+            width: 450px;
+        }
+        h1 { 
+            color: #0984e3; 
+            font-size: 1.8rem; 
+            margin-bottom: 0.5rem;
+            font-weight: 800;
+        }
+        .subtitle {
+            color: #636e72;
+            font-size: 0.95rem;
+            margin-bottom: 2rem;
+        }
+        
+        .upload-area {
+            border: 2px dashed #74b9ff;
+            padding: 2.5rem 1.5rem;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background-color: #f9fbfd;
+            margin-bottom: 1.5rem;
+        }
+        .upload-area:hover { 
+            background: #eaf4ff; 
+            border-color: #0984e3;
+            transform: translateY(-2px);
+        }
+        .upload-area i {
+            display: block;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        #fileInput { display: none; }
+        
+        .btn {
+            background-color: #0984e3;
+            color: white;
+            padding: 1rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            font-weight: 700;
+            font-size: 1rem;
+            transition: all 0.2s;
+            box-shadow: 0 4px 6px rgba(9, 132, 227, 0.2);
+        }
+        .btn:hover:not(:disabled) {
+            background-color: #0773c5;
+            box-shadow: 0 6px 12px rgba(9, 132, 227, 0.3);
+        }
+        .btn:disabled { 
+            background-color: #dfe6e9; 
+            color: #b2bec3;
+            cursor: not-allowed; 
+            box-shadow: none;
+        }
+
+        .instructions {
+            text-align: left;
+            background: #f8f9fa;
+            padding: 1.2rem;
+            border-radius: 8px;
+            margin-top: 2rem;
+            border-left: 4px solid #0984e3;
+        }
+        .instructions h3 {
+            margin-top: 0;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #636e72;
+        }
+        .instructions ol {
+            margin: 0;
+            padding-left: 1.2rem;
+            font-size: 0.85rem;
+            color: #2d3436;
+            line-height: 1.6;
+        }
+        .instructions li { margin-bottom: 0.5rem; }
+
+        #status { 
+            margin-top: 1.5rem; 
+            font-size: 0.85rem; 
+            font-weight: 600;
+            color: #00b894; 
+        }
+        .loading-spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(0,0,0,.1);
+            border-radius: 50%;
+            border-top-color: #0984e3;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>SF2 Data Migrator</h1>
+    <div class="subtitle">Transform your SPLAT logs into print-ready SF2 reports in seconds.</div>
+
+    <div class="upload-area" id="dropZone" onclick="document.getElementById('fileInput').click()">
+        <div style="font-size: 30px; margin-bottom: 10px;">📄</div>
+        <span id="fileLabel" style="font-weight: 600; color: #0984e3;">Click to select SPLAT file</span>
+        <div style="font-size: 0.8rem; color: #636e72; margin-top: 5px;">or drag and drop your .xlsx here</div>
+        <input type="file" id="fileInput" accept=".xlsx, .xls">
+    </div>
+
+    <button id="generateBtn" class="btn" disabled>Generate SF2 for Printing</button>
+    
+    <div id="status">Ready to process</div>
+
+    <div class="instructions">
+        <h3>How to use:</h3>
+        <ol>
+            <li>Generate your SF2 excel from the <b>SPLAT website</b>.</li>
+            <li>Click the box above to upload that output file (sf2) from <b>SPLAT</b>.</li>
+            <li>Once loaded, click <b>"Generate SF2 for Printing"</b>. It will place all the data in our preferred school SF2 Template automatically.</li>
+            <li>Open the downloaded file and <b>Print</b>.</li>
+        </ol>
+    </div>
+</div>
+
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const generateBtn = document.getElementById('generateBtn');
+    const status = document.getElementById('status');
+
+    let splatWorkbook = null;
+
+    // Helper to clean student names from SPLAT format
+    const cleanName = (name) => {
+        if (!name) return "";
+        let n = name.toString().trim();
+        
+        // 1. Remove trailing hyphens or empty commas (e.g. "NAME, FIRST -")
+        n = n.replace(/[-\s,]+$/, "");
+
+        // 2. Fix double commas: "Surname, Firstname, Middlename" -> "Surname, Firstname Middlename"
+        let parts = n.split(',').map(p => p.trim());
+        if (parts.length >= 3) {
+            let surname = parts[0];
+            let firstName = parts[1];
+            let middleName = parts.slice(2).join(" ");
+            return `${surname}, ${firstName} ${middleName}`;
+        }
+        
+        return n;
+    };
+
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            status.innerText = "Loading " + file.name + "...";
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const data = new Uint8Array(event.target.result);
+                splatWorkbook = XLSX.read(data, { type: 'array' });
+                status.innerText = "File loaded. Ready to generate.";
+                generateBtn.disabled = false;
+            };
+            reader.readAsArrayBuffer(file);
+        }
+    });
+
+    generateBtn.addEventListener('click', async () => {
+        try {
+            status.innerText = "Fetching template...";
+            const templateUrl = 'assets/SF2_Templates_SHS.xlsx';
+            const response = await fetch(templateUrl);
+            if (!response.ok) throw new Error("Template not found in assets folder.");
+            const templateBuffer = await response.arrayBuffer();
+
+            status.innerText = "Loading Template UI...";
+            const workbook = new ExcelJS.Workbook();
+            await workbook.xlsx.load(templateBuffer);
+            const destSheet = workbook.worksheets[0];
+
+            status.innerText = "Processing data...";
+            
+            // Helper to set value only if there's no formula in the destination cell
+            const safeSet = (cellRef, val) => {
+                // Protect the header area for student names (A10 to C12)
+                const match = cellRef.match(/^([A-Z]+)(\d+)$/);
+                if (match) {
+                    const col = match[1];
+                    const row = parseInt(match[2]);
+                    if (row >= 10 && row <= 12 && (col === 'A' || col === 'B' || col === 'C')) return;
+                }
+                const cell = destSheet.getCell(cellRef);
+                if (cell.formula) return; // Keep existing formulas
+                cell.value = val;
+            };
+
+            // SEARCH FOR THE CORRECT SOURCE SHEET IN SPLAT
+            let srcSheet = null;
+            let sheetName = "";
+            for (let name of splatWorkbook.SheetNames) {
+                let sheet = splatWorkbook.Sheets[name];
+                // Check if this sheet looks like an SF2 (has NAME in Column C)
+                for (let row = 1; row <= 10; row++) {
+                    let val = sheet['C' + row] ? sheet['C' + row].v : '';
+                    if (val && typeof val === 'string' && val.toUpperCase().includes('NAME')) {
+                        srcSheet = sheet;
+                        sheetName = name;
+                        break;
+                    }
+                }
+                if (srcSheet) break;
+            }
+
+            if (!srcSheet) {
+                srcSheet = splatWorkbook.Sheets[splatWorkbook.SheetNames[0]];
+                console.warn("Could not find 'NAME' header. Using first sheet.");
+            } else {
+                console.log("Found data in sheet: " + sheetName);
+            }
+
+            const getValue = (cell) => (srcSheet[cell] ? srcSheet[cell].v : '');
+
+            // 1. ROBUST HEADER & DATE DETECTION
+            const months = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
+            let monthIndex = -1;
+            let detectedYear = null;
+            let rawYearVal = getValue('J2') || ""; // Fallback for SY format
+
+            for (let r = 1; r <= 5; r++) {
+                for (let c = 0; c < 40; c++) {
+                    let cellVal = getValue(XLSX.utils.encode_col(c) + r);
+                    if (!cellVal) continue;
+                    let s = cellVal.toString().toUpperCase();
+                    if (monthIndex === -1) monthIndex = months.findIndex(m => s.includes(m));
+                    let yearMatch = s.match(/\b(20\d{2})\b/);
+                    if (yearMatch && !detectedYear) detectedYear = parseInt(yearMatch[1]);
+                }
+            }
+
+            if (monthIndex === -1) monthIndex = 5; // Default June
+            let year = detectedYear || 2026;
+            let monthName = months[monthIndex];
+
+            // 2. Map Header Info
+            safeSet('E10', getValue('F2')); // School ID
+            safeSet('H10', rawYearVal);    // School Year
+            
+            // Set Month and Year in AB6 as requested (Fetching from V3 in SPLAT)
+            let monthFromSplat = getValue('V3').toString().toUpperCase();
+            safeSet('AB6', monthFromSplat + (monthFromSplat.includes(year.toString()) ? "" : " " + year));
+
+            safeSet('C8', getValue('F3')); // School Name
+            safeSet('W10', getValue('V2')); // Grade Level (Moved from V3 since V3 is month)
+            safeSet('AF10', getValue('AD3')); // Section
+
+            // 3. SURGICAL DATE MAPPING
+            let templateDateMap = {};
+            for (let col = 4; col <= 45; col++) {
+                let v11 = destSheet.getRow(11).getCell(col).value;
+                let v12 = destSheet.getRow(12).getCell(col).value;
+                let d = null;
+                if (v11 && !isNaN(v11) && typeof v11 !== 'object') d = parseInt(v11);
+                else if (v12 && !isNaN(v12) && typeof v12 !== 'object') d = parseInt(v12);
+                if (d && d >= 1 && d <= 31) templateDateMap[d] = col;
+            }
+
+            // PRE-FILL ALL DATE HEADERS FOR THE MONTH
+            let daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+            const dayNames = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+            
+            for (let d = 1; d <= daysInMonth; d++) {
+                let printCol = templateDateMap[d];
+                if (!printCol) {
+                    let dateObj = new Date(year, monthIndex, d);
+                    let dayOfWeek = dateObj.getDay();
+                    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+                        let firstDayOfMonth = new Date(year, monthIndex, 1).getDay();
+                        let weekOffset = Math.floor((d + (firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1) - 1) / 7);
+                        printCol = 4 + (dayOfWeek - 1) + (weekOffset * 6);
+                        templateDateMap[d] = printCol;
+                    }
+                }
+                
+                if (printCol) {
+                    let colName = XLSX.utils.encode_col(printCol - 1);
+                    safeSet(colName + '11', d);
+                    let dObj = new Date(year, monthIndex, d);
+                    safeSet(colName + '12', dayNames[dObj.getDay()]);
+                }
+            }
+
+            let splatDates = []; 
+            for (let col = 6; col < 45; col++) {
+                let colName = XLSX.utils.encode_col(col);
+                let d = srcSheet[colName + '6'] ? srcSheet[colName + '6'].v : null;
+                if (d && !isNaN(d)) {
+                    let dateNum = parseInt(d);
+                    let printCol = templateDateMap[dateNum];
+                    if (printCol) splatDates.push({ date: dateNum, srcCol: colName, printCol: printCol });
+                }
+            }
+
+            // 3. Map Students (Surgical Placement)
+            let destRowMale = 14;  // Males start at B14
+            let destRowFemale = 65; // Females start at B65
+            let studentsCount = 0;
+
+            let isFemale = false;
+            for (let i = 8; i < 200; i++) {
+                let rawName = getValue('C' + i);
+                let no = getValue('A' + i);
+                
+                if (!rawName && !no) continue;
+                
+                let nameStr = rawName ? rawName.toString() : "";
+
+                if (nameStr.includes("MALE | TOTAL")) {
+                    isFemale = true;
+                    continue;
+                }
+
+                if (nameStr.toUpperCase().includes('FEMALE') && !nameStr.toUpperCase().includes('TOTAL')) {
+                    isFemale = true;
+                    continue;
+                }
+
+                if (!rawName || nameStr.toUpperCase().includes('TOTAL') || nameStr.trim().length < 5) continue;
+
+                let targetRow = isFemale ? destRowFemale : destRowMale;
+                safeSet('B' + targetRow, cleanName(rawName));
+
+                // Attendance Marks
+                for (let sd of splatDates) {
+                    let val = getValue(sd.srcCol + i);
+                    if (val !== undefined && val !== null && val !== "") {
+                        let cell = destSheet.getRow(targetRow).getCell(sd.printCol);
+                        if (!cell.formula) cell.value = val;
+                    }
+                }
+
+                // Totals & Remarks
+                // Columns AO(41) and AP(42) often have formulas in templates
+                safeSet('AO' + targetRow, getValue('AG' + i)); // Absent
+                safeSet('AP' + targetRow, getValue('AH' + i)); // Present
+                safeSet('AQ' + targetRow, getValue('AI' + i)); // Remarks
+
+                if (isFemale) destRowFemale++; else destRowMale++;
+                studentsCount++;
+            }
+
+            if (studentsCount === 0) {
+                alert("Warning: No students found in the SPLAT file. Please check if you uploaded the correct file.");
+            } else {
+                status.innerText = "Downloading...";
+                const buffer = await workbook.xlsx.writeBuffer();
+                const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = 'SF2_Generated_Report.xlsx';
+                link.click();
+                status.innerText = "Done! " + studentsCount + " students processed.";
+            }
+        } catch (err) {
+            console.error(err);
+            status.innerText = "Error: " + err.message;
+            alert("Error: " + err.message);
+        }
+    });
+</script>
+
+</body>
+</html>
